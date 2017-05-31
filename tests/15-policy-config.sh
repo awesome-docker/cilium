@@ -16,6 +16,13 @@ function remove_containers {
 	docker rm -f foo foo bar baz 2> /dev/null || true
 }
 
+function restart_cilium {
+	echo "------ restarting cilium ------"
+	service cilium restart
+	echo "------ sleeping for 10 seconds to let cilium agent get up and running ------"
+	sleep 10
+}
+
 function import_test_policy {
 	echo "------ adding policy ------"
 	cat <<EOF | cilium -D policy import -
@@ -99,8 +106,7 @@ echo "------ test default configuration for enable-policy ------"
 	# Expected behavior is that if Kubernetes is not enabled, policy enforcement is enabled if at least one policy exists.
 	# If no policy exists, then policy enforcement is disabled.
 	remove_containers
-	sudo service cilium restart
-	sleep 10
+	restart_cilium
 	start_containers
 
 	wait_endpoints_ready
@@ -117,9 +123,42 @@ echo "------ test default configuration for enable-policy ------"
 	check_config_policy_disabled
 }
 
+function test_default_to_true_policy_configuration {
+	echo "------ test that policy enforcement flag gets updated with no running endpoints: true ------"
+	remove_containers
+	# Make sure cilium agent starts in 'default' mode, so restart it.
+	restart_cilium
+	import_test_policy
+	check_config_policy_enabled
+	echo "------ setting cilium agent Policy=true"
+	cilium config Policy=true
+	check_config_policy_enabled
+	echo "------ deleting policy ------"
+	cilium policy delete --all
+	# After policy is deleted, policy enforcement should still be enabled.
+	check_config_policy_enabled
+}
+
+function test_default_to_false_policy_configuration {
+	 echo "------ test that policy enforcement flag gets updated with no running endpoints: false ------"
+	remove_containers
+	# Make sure cilium agent starts in 'default' mode, so restart it.
+	restart_cilium
+	import_test_policy
+	check_config_policy_enabled
+	echo "------ setting cilium agent Policy=false"
+	cilium config Policy=false
+	check_config_policy_disabled
+	echo "------ deleting policy ------"
+	cilium policy delete --all
+	# After policy is deleted, policy enforcement should be disabled.
+	check_config_policy_disabled
+}
+
 function test_true_policy_configuration {
 	echo "------ test true configuration for enable-policy ------"
 	remove_containers
+	restart_cilium
 	cilium config Policy=true
 	start_containers
 
@@ -140,6 +179,7 @@ function test_true_policy_configuration {
 function test_false_policy_configuration {
 	echo "------ test false configuration for enable-policy ------"
 	remove_containers
+	restart_cilium
 	cilium config Policy=false
 	start_containers
 
@@ -164,5 +204,7 @@ docker network inspect $TEST_NET 2> /dev/null || {
         docker network create --ipv6 --subnet ::1/112 --ipam-driver cilium --driver cilium $TEST_NET
 }
 test_default_policy_configuration
+test_default_to_true_policy_configuration
+test_default_to_false_policy_configuration
 test_true_policy_configuration
 test_false_policy_configuration 
